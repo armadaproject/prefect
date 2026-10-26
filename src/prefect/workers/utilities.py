@@ -1,5 +1,4 @@
 from copy import deepcopy
-from logging import getLogger
 from typing import Any, Dict, List, Optional
 
 from prefect.client.collections import get_collections_metadata_client
@@ -7,10 +6,68 @@ from prefect.logging.loggers import get_logger
 from prefect.settings import get_current_settings
 from prefect.workers.base import BaseWorker
 
+logger = get_logger(__name__)
+
 
 def _is_worker_debug_mode() -> bool:
     settings = get_current_settings()
     return settings.debug_mode or settings.worker.debug_mode
+
+
+def _collection_name_for_worker(worker_cls: type[BaseWorker[Any, Any, Any]]) -> str:
+    """Returns the distribution name of the package a worker class was defined in.
+
+    Worker classes live in a module rooted at their package, so `prefect_armada.worker`
+    belongs to `prefect-armada`, matching how the collections registry keys its
+    worker metadata.
+    """
+    return worker_cls.__module__.split(".")[0].replace("_", "-")
+
+
+def get_locally_installed_worker_metadata() -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """Builds worker metadata for every worker type installed in this environment.
+
+    The result mirrors the shape of the collections registry's
+    `aggregate-worker-metadata` view — collection name, then worker type, then
+    metadata — so locally installed workers can be merged into that view. Workers
+    from integrations that are not published to the registry (a private or
+    in-development collection) are only discoverable this way.
+
+    A worker whose metadata cannot be built, for example because its default
+    job template raises, is logged and left out, so that it does not hide the
+    other installed workers.
+    """
+    metadata: Dict[str, Dict[str, Dict[str, Any]]] = {}
+
+    for worker_type in BaseWorker.get_all_available_worker_types():
+        try:
+            worker_cls = BaseWorker.get_worker_class_from_type(worker_type)
+            if worker_cls is None:
+                continue
+
+            collection_name = _collection_name_for_worker(worker_cls)
+            worker_metadata = {
+                "type": worker_type,
+                "display_name": worker_cls.get_display_name(),
+                "description": worker_cls.get_description(),
+                "documentation_url": worker_cls.get_documentation_url(),
+                "logo_url": worker_cls.get_logo_url(),
+                "install_command": f"pip install {collection_name}",
+                "default_base_job_configuration": (
+                    worker_cls.get_default_base_job_template()
+                ),
+                "is_beta": False,
+            }
+        except Exception:
+            logger.warning(
+                "Unable to read metadata for the locally installed %r worker",
+                worker_type,
+                exc_info=True,
+            )
+            continue
+        metadata.setdefault(collection_name, {})[worker_type] = worker_metadata
+
+    return metadata
 
 
 async def get_available_work_pool_types() -> List[str]:
@@ -26,7 +83,7 @@ async def get_available_work_pool_types() -> List[str]:
             # Return only work pool types from the local type registry if
             # the request to the collections registry fails.
             if _is_worker_debug_mode():
-                getLogger().warning(
+                logger.warning(
                     "Unable to get worker metadata from the collections registry",
                     exc_info=True,
                 )
@@ -54,7 +111,7 @@ async def get_default_base_job_template_for_infrastructure_type(
                         return worker.get("default_base_job_configuration")
         except Exception:
             if _is_worker_debug_mode():
-                get_logger().warning(
+                logger.warning(
                     (
                         "Unable to get default base job template for"
                         f" {infra_type!r} worker type"

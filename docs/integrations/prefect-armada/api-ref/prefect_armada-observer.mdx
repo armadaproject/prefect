@@ -1,0 +1,80 @@
+---
+title: observer
+sidebarTitle: observer
+---
+
+# `prefect_armada.observer`
+
+
+
+Module containing the Armada observer, which watches Armada job set events on
+behalf of Prefect.
+
+Armada is asynchronous: a worker submits a job and Armada schedules it onto one
+of its Kubernetes clusters at some later point. The observer keeps Prefect in
+sync with what Armada does with those jobs by
+
+- replicating Armada job events into Prefect's event system, where they can be
+  used by Automations, and
+- marking a flow run as `Crashed` when its Armada job fails before the flow run
+  is able to report its own state (for example a bad image or a missing
+  dependency).
+
+Armada only exposes events per job set, so the observer watches the job sets that
+this process submits to. Additional job sets can be watched by setting
+`PREFECT_INTEGRATIONS_ARMADA_OBSERVER_JOB_SETS` to a comma-separated list of
+`<queue>/<job_set_id>` entries.
+
+
+## Functions
+
+### `observe_job_set` <sup><a href="https://github.com/PrefectHQ/prefect/blob/main/src/integrations/prefect-armada/prefect_armada/observer.py#L212" target="_blank"><Icon icon="github" style="width: 14px; height: 14px;" /></a></sup>
+
+```python
+observe_job_set(credentials: ArmadaCredentials, queue: str, job_set_id: str, job_id: str | None = None) -> None
+```
+
+
+Registers an Armada job set to be watched by the observer.
+
+Safe to call from any thread and safe to call repeatedly for the same job
+set. A running watch keeps going until `job_id` has finished; a job set is
+only re-watched if its current watch is already ending, or if no `job_id` is
+given.
+
+**Args:**
+- `credentials`: The credentials used to connect to Armada.
+- `queue`: The name of the Armada queue the job set was submitted to.
+- `job_set_id`: The name of the Armada job set to watch.
+- `job_id`: The ID of the job just submitted to the job set, if any. The
+job set is watched until this job has finished.
+
+
+### `start_observer` <sup><a href="https://github.com/PrefectHQ/prefect/blob/main/src/integrations/prefect-armada/prefect_armada/observer.py#L1063" target="_blank"><Icon icon="github" style="width: 14px; height: 14px;" /></a></sup>
+
+```python
+start_observer() -> None
+```
+
+
+Start the observer in a separate thread.
+
+Waits for the observer's first startup attempt to finish. If that attempt
+fails for a reason that may clear on its own, such as an unreachable
+Prefect API, the observer keeps retrying in the background, and job sets
+registered in the meantime are watched once it is running.
+
+**Raises:**
+- `ArmadaObserverStartupError`: If the first startup attempt fails for a
+reason that retrying will not fix.
+
+
+### `stop_observer` <sup><a href="https://github.com/PrefectHQ/prefect/blob/main/src/integrations/prefect-armada/prefect_armada/observer.py#L1121" target="_blank"><Icon icon="github" style="width: 14px; height: 14px;" /></a></sup>
+
+```python
+stop_observer() -> None
+```
+
+
+Stop the observer thread.
+
